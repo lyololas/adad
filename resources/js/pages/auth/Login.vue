@@ -9,6 +9,7 @@ import AuthBase from '@/layouts/AuthLayout.vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import { LoaderCircle } from 'lucide-vue-next';
 
+
 defineProps<{
     status?: string;
     canResetPassword: boolean;
@@ -25,13 +26,11 @@ const submit = () => {
         onFinish: () => form.reset('password'),
     });
 };
-export default {
-  methods: {
-    loginWithYandex() {
-      window.location.href = '/auth/yandex';
-    }
-  }
-}
+
+// Converted to Composition API style
+const loginWithYandex = () => {
+    window.location.href = '/auth/yandex';
+};
 </script>
 
 <template>
@@ -95,7 +94,10 @@ export default {
                 Don't have an account?
                 <TextLink :href="route('register')" :tabindex="5">Sign up</TextLink>
             </div>
-            <button @click="loginWithYandex">Login with Yandex</button>
+            <div class="text-center text-sm text-muted-foreground">
+                Or log in with
+                <TextLink href="#" @click.prevent="loginWithYandex" class="cursor-pointer">Yandex</TextLink>
+            </div>
         </form>
     </AuthBase>
 </template>

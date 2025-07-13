@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import * as XLSX from 'xlsx'
+import axios from 'axios'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { Head } from '@inertiajs/vue3'
 
@@ -90,9 +91,10 @@ const clearTable = () => {
   table.value = { headers: [], rows: [] }
 }
 
-const exportToExcel = () => {
+const exportToExcel = async () => {
   if (!table.value.headers.length || !table.value.rows.length) return
 
+  // 1. Create Excel file
   const excelData = [
     table.value.headers, 
     ...table.value.rows  
@@ -102,8 +104,36 @@ const exportToExcel = () => {
   const ws = XLSX.utils.aoa_to_sheet(excelData)
   XLSX.utils.book_append_sheet(wb, ws, 'Exported Data')
 
+  // 2. Convert to binary
+  const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+  
+  // 3. Create Blob
+  const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  
+  try {
+    // 4. Upload to Yandex Disk
+    await uploadToYandexDisk(blob)
+  } catch (error) {
+    console.error('Upload failed:', error)
+    alert('Failed to upload to Yandex Disk')
+  }
+}
+const uploadToYandexDisk = async (fileBlob: Blob) => {
   const fileName = 'tilda_export_' + new Date().toISOString().slice(0, 10) + '.xlsx'
-  XLSX.writeFile(wb, fileName)
+  const formData = new FormData()
+  formData.append('file', fileBlob, fileName)
+
+  try {
+    const response = await axios.post('/upload-to-yandex', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+    window.open(response.data.url, '_blank')
+  } catch (error) {
+    console.error('Upload failed:', error)
+    alert('Failed to upload to Yandex Disk')
+  }
 }
 
 const startEditing = (rowIndex: number | null, colIndex: number, isHeader: boolean = false) => {
