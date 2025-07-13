@@ -13,6 +13,8 @@ Route::get('dashboard', function () {
 Route::get('/my-organization', [RegisteredUserController::class, 'show'])
      ->middleware('auth')
      ->name('myorg');
-
+Route::get('/tilda-exporter', [RegisteredUserController::class, 'show'])
+     ->middleware('auth')
+     ->name('tilda');
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';
