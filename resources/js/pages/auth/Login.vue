@@ -25,6 +25,13 @@ const submit = () => {
         onFinish: () => form.reset('password'),
     });
 };
+export default {
+  methods: {
+    loginWithYandex() {
+      window.location.href = '/auth/yandex';
+    }
+  }
+}
 </script>
 
 <template>
@@ -88,6 +95,7 @@ const submit = () => {
                 Don't have an account?
                 <TextLink :href="route('register')" :tabindex="5">Sign up</TextLink>
             </div>
+            <button @click="loginWithYandex">Login with Yandex</button>
         </form>
     </AuthBase>
 </template>
