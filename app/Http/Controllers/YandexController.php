@@ -40,150 +40,179 @@ class YandexController extends Controller
     }
 
     public function upload(Request $request)
-{
-    $request->validate([
-        'file' => 'required|file|max:10240|mimes:xlsx,xls'
-    ]);
+    {
+        $request->validate([
+            'file' => 'required|file|max:10240|mimes:xlsx,xls'
+        ]);
 
-    $user = $request->user();
-    if (!$user->yandex_token) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Yandex token not available. Please reauthenticate.'
-        ], 401);
-    }
+        $user = $request->user();
+        if (!$user->yandex_token) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Yandex token not available. Please reauthenticate.'
+            ], 401);
+        }
 
-    try {
-        $file = $request->file('file');
-        $fileName = 'export_' . now()->format('Y-m-d_His') . '.xlsx';
+        // Store file temporarily for retries
+        $tempFilePath = $this->storeTempFile($request->file('file'));
+        $fileName = 'data.xlsx';
         $remotePath = '/Documents/' . $fileName;
 
-        // 1. Ensure directory exists
-        $this->ensureDirectory($user->yandex_token, '/Documents');
+        // Initial attempt
+        $result = $this->attemptUploadWithRetry($user, $tempFilePath, $remotePath);
 
-        // 2. Get upload URL
-        $uploadUrl = $this->getUploadUrl($user->yandex_token, $remotePath);
-
-        // 3. Upload file
-        $uploadResponse = Http::withHeaders([
-            'Authorization' => 'OAuth ' . $user->yandex_token,
-            'Content-Type' => 'application/octet-stream',
-        ])->withBody(
-            fopen($file->getRealPath(), 'r')
-        )->put($uploadUrl);
-
-        if ($uploadResponse->failed()) {
-            throw new \Exception('File upload failed: ' . $uploadResponse->body());
+        // Clean up temp file
+        if (file_exists($tempFilePath)) {
+            unlink($tempFilePath);
         }
 
-        // 4. Publish and get URL
-        $publicUrl = $this->publishFile($user->yandex_token, $remotePath);
+        return $result;
+    }
 
-        return response()->json([
-            'success' => true,
-            'url' => $publicUrl,
-            'file_name' => $fileName
-        ]);
+    private function attemptUploadWithRetry($user, $tempFilePath, $remotePath, $maxAttempts = 5, $delaySeconds = 10)
+    {
+        $attempt = 1;
+        $lastError = null;
 
-    } catch (\Exception $e) {
-        Log::error('Yandex upload failed', [
-            'error' => $e->getMessage(),
+        while ($attempt <= $maxAttempts) {
+            try {
+                // 1. Ensure directory exists
+                $this->ensureDirectory($user->yandex_token, '/Documents');
+
+                // 2. Get upload URL with overwrite
+                $uploadUrl = $this->getUploadUrl($user->yandex_token, $remotePath);
+
+                // 3. Upload file
+                $uploadResponse = Http::withHeaders([
+                    'Authorization' => 'OAuth ' . $user->yandex_token,
+                    'Content-Type' => 'application/octet-stream',
+                ])->withBody(
+                    fopen($tempFilePath, 'r')
+                )->put($uploadUrl);
+
+                if ($uploadResponse->failed()) {
+                    throw new \Exception('File upload failed: ' . $uploadResponse->body());
+                }
+
+                // 4. Publish and get URL
+                $publicUrl = $this->publishFile($user->yandex_token, $remotePath);
+
+                return response()->json([
+                    'success' => true,
+                    'url' => $publicUrl,
+                    'file_name' => basename($remotePath),
+                    'action' => 'updated',
+                    'attempts' => $attempt
+                ]);
+
+            } catch (\Exception $e) {
+                $lastError = $e;
+                Log::warning("Yandex upload attempt $attempt failed", [
+                    'error' => $e->getMessage(),
+                    'user_id' => $user->id,
+                    'next_attempt_in' => "$delaySeconds seconds"
+                ]);
+
+                if ($attempt < $maxAttempts) {
+                    sleep($delaySeconds);
+                }
+                $attempt++;
+            }
+        }
+
+        Log::error('Yandex upload failed after all attempts', [
+            'error' => $lastError->getMessage(),
             'user_id' => $user->id,
-            'trace' => $e->getTraceAsString()
+            'attempts' => $maxAttempts
         ]);
+
         return response()->json([
             'success' => false,
-            'message' => 'Upload failed: ' . $e->getMessage()
+            'message' => 'Upload failed after ' . $maxAttempts . ' attempts: ' . $lastError->getMessage()
         ], 500);
     }
-}
 
-    /* ---------- helpers ---------- */
+    private function storeTempFile($file)
+    {
+        $tempPath = sys_get_temp_dir() . '/yandex_upload_' . uniqid() . '.xlsx';
+        file_put_contents($tempPath, file_get_contents($file->getRealPath()));
+        return $tempPath;
+    }
 
-    private function ensureDirectory($token, $path)
-{
-    $client = new \GuzzleHttp\Client();
-    
-    try {
-        $response = $client->put('https://cloud-api.yandex.net/v1/disk/resources', [
-            'headers' => [
+    /* ---------- existing helpers ---------- */
+    private function getFileInfo($token, $path)
+    {
+        try {
+            $response = Http::withHeaders([
                 'Authorization' => 'OAuth ' . $token,
                 'Accept' => 'application/json',
-            ],
-            'query' => [ // This is the critical fix - use query instead of json
-                'path' => $path
-            ]
-        ]);
+            ])->get('https://cloud-api.yandex.net/v1/disk/resources', [
+                'path' => $path,
+                'fields' => 'revision'
+            ]);
 
-        return true;
-        
-    } catch (\GuzzleHttp\Exception\ClientException $e) {
-        $status = $e->getResponse()->getStatusCode();
-        // 409 means directory already exists - that's fine
-        if ($status === 409) {
-            return true;
-        }
-        
-        $responseBody = $e->getResponse()->getBody()->getContents();
-        Log::error('Yandex directory creation failed', [
-            'status' => $status,
-            'response' => $responseBody,
-            'path' => $path
-        ]);
-        throw new \Exception('Directory creation failed: ' . $responseBody);
-    }
-}
-private function ensureDirectoryWithRetry($token, $path, $attempts = 3)
-{
-    $lastException = null;
-    
-    for ($i = 0; $i < $attempts; $i++) {
-        try {
-            return $this->ensureDirectory($token, $path);
+            return $response->successful() ? $response->json() : null;
         } catch (\Exception $e) {
-            $lastException = $e;
-            sleep(1); // Wait before retry
-            continue;
+            return null;
         }
     }
-    
-    throw $lastException;
-}
 
+    private function ensureDirectory($token, $path)
+    {
+        $client = new \GuzzleHttp\Client();
+        
+        try {
+            $response = $client->put('https://cloud-api.yandex.net/v1/disk/resources', [
+                'headers' => [
+                    'Authorization' => 'OAuth ' . $token,
+                    'Accept' => 'application/json',
+                ],
+                'query' => [
+                    'path' => $path
+                ]
+            ]);
 
-        private function getUploadUrl($token, $path)
-{
-    $response = Http::withHeaders([
-        'Authorization' => 'OAuth ' . $token,
-        'Accept' => 'application/json',
-    ])->get('https://cloud-api.yandex.net/v1/disk/resources/upload', [
-        'path' => $path,
-        'overwrite' => 'true'
-    ]);
-
-    Log::debug('Yandex upload URL response', [
-        'status' => $response->status(),
-        'response' => $response->json(),
-        'path' => $path
-    ]);
-
-    if ($response->failed()) {
-        throw new \Exception('Failed to get upload URL: ' . $response->body());
+            return true;
+            
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            if ($e->getResponse()->getStatusCode() === 409) {
+                return true;
+            }
+            throw new \Exception('Directory creation failed');
+        }
     }
 
-    return $response->json('href');
-}
+    private function getUploadUrl($token, $path)
+    {
+        $response = Http::withHeaders([
+            'Authorization' => 'OAuth ' . $token,
+            'Accept' => 'application/json',
+        ])->get('https://cloud-api.yandex.net/v1/disk/resources/upload', [
+            'path' => $path,
+            'overwrite' => 'true'
+        ]);
 
-private function publishFile($token, $path)
-{
-    Http::withHeaders(['Authorization' => 'OAuth ' . $token])
-        ->put('https://cloud-api.yandex.net/v1/disk/resources/publish', ['path' => $path]);
+        if ($response->failed()) {
+            throw new \Exception('Failed to get upload URL: ' . $response->body());
+        }
 
-    $meta = Http::withHeaders(['Authorization' => 'OAuth ' . $token])
-                ->get('https://cloud-api.yandex.net/v1/disk/resources', [
-                    'path'   => $path,
-                    'fields' => 'public_url',
-                ]);
-    return $meta->json('public_url') ?? 'https://disk.yandex.ru/client/disk' . $path;
-}
+        return $response->json('href');
+    }
+
+    private function publishFile($token, $path)
+    {
+        Http::withHeaders(['Authorization' => 'OAuth ' . $token])
+            ->put('https://cloud-api.yandex.net/v1/disk/resources/publish', [
+                'path' => $path
+            ]);
+
+        $meta = Http::withHeaders(['Authorization' => 'OAuth ' . $token])
+                    ->get('https://cloud-api.yandex.net/v1/disk/resources', [
+                        'path' => $path,
+                        'fields' => 'public_url',
+                    ]);
+                    
+        return $meta->json('public_url') ?? 'https://disk.yandex.ru/client/disk' . $path;
+    }
+
 }

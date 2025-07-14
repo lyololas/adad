@@ -94,7 +94,7 @@ const clearTable = () => {
 const exportToExcel = async () => {
   if (!table.value.headers.length || !table.value.rows.length) return
 
-  // 1. Create Excel file
+  // Create Excel file
   const excelData = [
     table.value.headers, 
     ...table.value.rows  
@@ -102,37 +102,51 @@ const exportToExcel = async () => {
 
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet(excelData)
-  XLSX.utils.book_append_sheet(wb, ws, 'Exported Data')
-
-  // 2. Convert to binary
+  XLSX.utils.book_append_sheet(wb, ws, 'Data')
   const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
-  
-  // 3. Create Blob
   const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+
+  // Retry mechanism
+  const maxAttempts = 3
+  let attempts = 0
   
-  try {
-    // 4. Upload to Yandex Disk
-    await uploadToYandexDisk(blob)
-  } catch (error) {
-    console.error('Upload failed:', error)
-    alert('Failed to upload to Yandex Disk')
+  const attemptUpload = async () => {
+    try {
+      const response = await uploadToYandexDisk(blob)
+      alert(`File successfully ${response.data.action} at: ${response.data.url}`)
+      window.open(response.data.url, '_blank')
+      return true // Success
+    } catch (error) {
+      attempts++
+      console.error(`Upload attempt ${attempts} failed:`, error)
+      
+      if (attempts < maxAttempts) {
+        // Wait 5 seconds before retrying
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        return attemptUpload() // Recursive retry
+      } else {
+        alert('Failed to upload after 3 attempts. Please try again later.')
+        return false // Failure
+      }
+    }
   }
+
+  await attemptUpload()
 }
+
 const uploadToYandexDisk = async (fileBlob: Blob) => {
-  const fileName = 'tilda_export_' + new Date().toISOString().slice(0, 10) + '.xlsx'
   const formData = new FormData()
-  formData.append('file', fileBlob, fileName)
+  formData.append('file', fileBlob, 'data.xlsx') // Fixed filename
 
   try {
-    const response = await axios.post('/upload-to-yandex', formData, {
+    return await axios.post('/upload-to-yandex', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     })
-    window.open(response.data.url, '_blank')
   } catch (error) {
     console.error('Upload failed:', error)
-    alert('Failed to upload to Yandex Disk')
+    throw error
   }
 }
 
