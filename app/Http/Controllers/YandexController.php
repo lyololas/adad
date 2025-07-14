@@ -18,7 +18,7 @@ class YandexController extends Controller
         
         try {
             return Socialite::driver('yandex')
-                ->scopes(['cloud_api:disk.write']) // Add disk write permission
+            ->scopes(['cloud_api:disk.write'])
                 ->redirectUrl(route('yandex.callback'))
                 ->redirect();
             
