@@ -14,159 +14,176 @@ class YandexController extends Controller
 {
     public function redirectToProvider()
     {
-        Log::debug('Attempting Yandex redirect');
-        
-        try {
-            return Socialite::driver('yandex')
+        return Socialite::driver('yandex')
             ->scopes(['cloud_api:disk.write'])
-                ->redirectUrl(route('yandex.callback'))
-                ->redirect();
-            
-        } catch (\Exception $e) {
-            Log::error('YANDEX REDIRECT ERROR: ' . $e->getMessage());
-            return redirect('/login')->withErrors('Yandex login unavailable');
-        }
+            ->redirectUrl(route('yandex.callback'))
+            ->redirect();
     }
 
     public function handleProviderCallback()
     {
-        Log::debug('Yandex callback initiated');
-        
-        try {
-            $yandexUser = Socialite::driver('yandex')->user();
-            Log::debug('Yandex user data received', [
-                'id' => $yandexUser->getId(),
-                'email' => $yandexUser->getEmail(),
-                'token' => $yandexUser->token
-            ]);
+        $yandexUser = Socialite::driver('yandex')->user();
 
-            $email = $yandexUser->getEmail() ?? 'yandex_'.$yandexUser->getId().'@placeholder.com';
-            
-            $user = User::updateOrCreate(
-                ['email' => $email],
-                [
-                    'name' => $yandexUser->getName() ?? $yandexUser->getNickname() ?? 'Yandex User',
-                    'password' => bcrypt(Str::random(32)),
-                    'yandex_token' => $yandexUser->token, // Store the access token
-                    'yandex_refresh_token' => $yandexUser->refreshToken,
-                    'yandex_token_expires_at' => now()->addSeconds($yandexUser->expiresIn),
-                ]
-            );
+        $user = User::updateOrCreate(
+            ['email' => $yandexUser->getEmail() ?? 'yandex_'.$yandexUser->getId().'@placeholder.com'],
+            [
+                'name' => $yandexUser->getName() ?? 'Yandex User',
+                'password' => bcrypt(Str::random(32)),
+                'yandex_token' => $yandexUser->token,
+                'yandex_refresh_token' => $yandexUser->refreshToken,
+                'yandex_token_expires_at' => now()->addSeconds($yandexUser->expiresIn - 60),
+            ]
+        );
 
-            Auth::login($user, true);
-            Log::debug('User logged in', ['user_id' => $user->id]);
-
-            return redirect()->intended('/dashboard');
-
-        } catch (\Exception $e) {
-            Log::error('YANDEX CALLBACK ERROR: ' . $e->getMessage());
-            return redirect('/login')->withErrors('Failed to authenticate with Yandex');
-        }
+        Auth::login($user, true);
+        return redirect()->intended('/dashboard');
     }
 
     public function upload(Request $request)
-    {
-        $request->validate([
-            'file' => 'required|file|max:10240', // 10MB max
+{
+    $request->validate([
+        'file' => 'required|file|max:10240|mimes:xlsx,xls'
+    ]);
+
+    $user = $request->user();
+    if (!$user->yandex_token) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Yandex token not available. Please reauthenticate.'
+        ], 401);
+    }
+
+    try {
+        $file = $request->file('file');
+        $fileName = 'export_' . now()->format('Y-m-d_His') . '.xlsx';
+        $remotePath = '/Documents/' . $fileName;
+
+        // 1. Ensure directory exists
+        $this->ensureDirectory($user->yandex_token, '/Documents');
+
+        // 2. Get upload URL
+        $uploadUrl = $this->getUploadUrl($user->yandex_token, $remotePath);
+
+        // 3. Upload file
+        $uploadResponse = Http::withHeaders([
+            'Authorization' => 'OAuth ' . $user->yandex_token,
+            'Content-Type' => 'application/octet-stream',
+        ])->withBody(
+            fopen($file->getRealPath(), 'r')
+        )->put($uploadUrl);
+
+        if ($uploadResponse->failed()) {
+            throw new \Exception('File upload failed: ' . $uploadResponse->body());
+        }
+
+        // 4. Publish and get URL
+        $publicUrl = $this->publishFile($user->yandex_token, $remotePath);
+
+        return response()->json([
+            'success' => true,
+            'url' => $publicUrl,
+            'file_name' => $fileName
         ]);
 
-        try {
-            $user = $request->user();
-            if (!$user || !$user->yandex_token) {
-                throw new \Exception('No Yandex token available');
-            }
+    } catch (\Exception $e) {
+        Log::error('Yandex upload failed', [
+            'error' => $e->getMessage(),
+            'user_id' => $user->id,
+            'trace' => $e->getTraceAsString()
+        ]);
+        return response()->json([
+            'success' => false,
+            'message' => 'Upload failed: ' . $e->getMessage()
+        ], 500);
+    }
+}
 
-            $file = $request->file('file');
-            $fileName = 'export_' . now()->format('Y-m-d_H-i-s') . '_' . $file->getClientOriginalName();
+    /* ---------- helpers ---------- */
 
-            // Step 1: Get upload URL
-            $response = Http::withHeaders([
-                'Authorization' => 'OAuth ' . $user->yandex_token,
+    private function ensureDirectory($token, $path)
+{
+    $client = new \GuzzleHttp\Client();
+    
+    try {
+        $response = $client->put('https://cloud-api.yandex.net/v1/disk/resources', [
+            'headers' => [
+                'Authorization' => 'OAuth ' . $token,
                 'Accept' => 'application/json',
-            ])->get('https://cloud-api.yandex.net/v1/disk/resources/upload', [
-                'path' => '/Documents/' . $fileName,
-                'overwrite' => 'true',
-            ]);
+            ],
+            'query' => [ // This is the critical fix - use query instead of json
+                'path' => $path
+            ]
+        ]);
 
-            if ($response->failed()) {
-                throw new \Exception('Failed to get upload URL: ' . $response->body());
-            }
-
-            $uploadData = $response->json();
-            $uploadUrl = $uploadData['href'];
-
-            // Step 2: Upload the file
-            $uploadResponse = Http::withHeaders([
-                'Authorization' => 'OAuth ' . $user->yandex_token,
-            ])->put($uploadUrl, file_get_contents($file->getRealPath()));
-
-            if ($uploadResponse->failed()) {
-                throw new \Exception('Upload failed: ' . $uploadResponse->body());
-            }
-
-            // Step 3: Get public view URL
-            $publishResponse = Http::withHeaders([
-                'Authorization' => 'OAuth ' . $user->yandex_token,
-            ])->put('https://cloud-api.yandex.net/v1/disk/resources/publish', [
-                'path' => '/Documents/' . $fileName,
-            ]);
-
-            if ($publishResponse->failed()) {
-                throw new \Exception('Publish failed: ' . $publishResponse->body());
-            }
-
-            $metaResponse = Http::withHeaders([
-                'Authorization' => 'OAuth ' . $user->yandex_token,
-            ])->get('https://cloud-api.yandex.net/v1/disk/resources', [
-                'path' => '/Documents/' . $fileName,
-            ]);
-
-            if ($metaResponse->failed()) {
-                throw new \Exception('Failed to get file metadata: ' . $metaResponse->body());
-            }
-
-            $fileMeta = $metaResponse->json();
-            $publicUrl = $fileMeta['public_url'] ?? 'https://disk.yandex.ru/client/disk/Documents/' . rawurlencode($fileName);
-
-            return response()->json([
-                'success' => true,
-                'url' => $publicUrl,
-                'file_name' => $fileName,
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Yandex Disk upload error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'File upload failed',
-                'error' => $e->getMessage(),
-            ], 500);
+        return true;
+        
+    } catch (\GuzzleHttp\Exception\ClientException $e) {
+        $status = $e->getResponse()->getStatusCode();
+        // 409 means directory already exists - that's fine
+        if ($status === 409) {
+            return true;
         }
+        
+        $responseBody = $e->getResponse()->getBody()->getContents();
+        Log::error('Yandex directory creation failed', [
+            'status' => $status,
+            'response' => $responseBody,
+            'path' => $path
+        ]);
+        throw new \Exception('Directory creation failed: ' . $responseBody);
     }
-
-    public function refreshToken(User $user)
-    {
+}
+private function ensureDirectoryWithRetry($token, $path, $attempts = 3)
+{
+    $lastException = null;
+    
+    for ($i = 0; $i < $attempts; $i++) {
         try {
-            $response = Http::asForm()->post('https://oauth.yandex.com/token', [
-                'grant_type' => 'refresh_token',
-                'refresh_token' => $user->yandex_refresh_token,
-                'client_id' => config('services.yandex.client_id'),
-                'client_secret' => config('services.yandex.client_secret'),
-            ]);
-
-            $data = $response->json();
-
-            $user->update([
-                'yandex_token' => $data['access_token'],
-                'yandex_refresh_token' => $data['refresh_token'],
-                'yandex_token_expires_at' => now()->addSeconds($data['expires_in']),
-            ]);
-
-            return $data['access_token'];
-
+            return $this->ensureDirectory($token, $path);
         } catch (\Exception $e) {
-            Log::error('Yandex token refresh failed: ' . $e->getMessage());
-            return null;
+            $lastException = $e;
+            sleep(1); // Wait before retry
+            continue;
         }
     }
+    
+    throw $lastException;
+}
+
+
+        private function getUploadUrl($token, $path)
+{
+    $response = Http::withHeaders([
+        'Authorization' => 'OAuth ' . $token,
+        'Accept' => 'application/json',
+    ])->get('https://cloud-api.yandex.net/v1/disk/resources/upload', [
+        'path' => $path,
+        'overwrite' => 'true'
+    ]);
+
+    Log::debug('Yandex upload URL response', [
+        'status' => $response->status(),
+        'response' => $response->json(),
+        'path' => $path
+    ]);
+
+    if ($response->failed()) {
+        throw new \Exception('Failed to get upload URL: ' . $response->body());
+    }
+
+    return $response->json('href');
+}
+
+private function publishFile($token, $path)
+{
+    Http::withHeaders(['Authorization' => 'OAuth ' . $token])
+        ->put('https://cloud-api.yandex.net/v1/disk/resources/publish', ['path' => $path]);
+
+    $meta = Http::withHeaders(['Authorization' => 'OAuth ' . $token])
+                ->get('https://cloud-api.yandex.net/v1/disk/resources', [
+                    'path'   => $path,
+                    'fields' => 'public_url',
+                ]);
+    return $meta->json('public_url') ?? 'https://disk.yandex.ru/client/disk' . $path;
+}
 }

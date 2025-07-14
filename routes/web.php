@@ -22,7 +22,8 @@ Route::get('/tilda-exporter', [RegisteredUserController::class, 'show'])
 // routes/web.php
 Route::get('/auth/yandex', [YandexController::class, 'redirectToProvider'])->name('yandex.login');
 Route::get('/auth/yandex/callback', [YandexController::class, 'handleProviderCallback'])->name('yandex.callback');
-Route::post('/upload-to-yandex', [YandexController::class, 'upload']);
+Route::post('/upload-to-yandex', [YandexController::class, 'upload'])
+     ->middleware(['web', 'auth']);   // web group gives the session
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';
 

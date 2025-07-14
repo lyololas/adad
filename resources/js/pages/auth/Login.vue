@@ -30,7 +30,7 @@ const submit = () => {
 // Converted to Composition API style
 const loginWithYandex = () => {
     window.location.href = '/auth/yandex';
-};
+    };
 </script>
 
 <template>
