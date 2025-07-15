@@ -18,12 +18,16 @@ Route::get('/my-organization', [RegisteredUserController::class, 'show'])
 Route::get('/tilda-exporter', [RegisteredUserController::class, 'show'])
      ->middleware('auth')
      ->name('tilda');
+Route::get('/settings/api-key', function () {
+    return Inertia::render('settings/ApiKey');
+})->middleware(['auth', 'check.yandex.token']);
 
-// routes/web.php
 Route::get('/auth/yandex', [YandexController::class, 'redirectToProvider'])->name('yandex.login');
 Route::get('/auth/yandex/callback', [YandexController::class, 'handleProviderCallback'])->name('yandex.callback');
 Route::post('/upload-to-yandex', [YandexController::class, 'upload'])
-     ->middleware(['web', 'auth']);   // web group gives the session
+     ->middleware(['web', 'auth']);  
+Route::post('/generate-api-key', [YandexController::class, 'generateApiKey'])
+     ->middleware(['auth', 'check.yandex.token']);
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';
 

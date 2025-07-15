@@ -4,7 +4,10 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Route;
 use SocialiteProviders\Manager\SocialiteWasCalled;
+use App\Http\Middleware\ApiKeyAuth;
+use App\Http\Middleware\CheckYandexToken;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,5 +27,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(function (SocialiteWasCalled $event) {
             $event->extendSocialite('yandex', \SocialiteProviders\Yandex\Provider::class);
         });
+        Route::aliasMiddleware('api.key', ApiKeyAuth::class);
+        Route::aliasMiddleware('check.yandex.token', CheckYandexToken::class);
     }
 }

@@ -18,6 +18,10 @@ const sidebarNavItems: NavItem[] = [
         title: 'Appearance',
         href: '/settings/appearance',
     },
+    {
+        title: 'API Key',
+        href: '/settings/api-key',
+    },
 ];
 
 const page = usePage();

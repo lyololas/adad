@@ -22,6 +22,11 @@ class User extends Authenticatable
         'email',
         'password',
         'convertfromwhat',
+        'yandex_token',
+        'yandex_refresh_token',
+        'yandex_token_expires_at',
+        'api_key',
+        'api_key_expires_at',
     ];
 
     /**
@@ -44,6 +49,16 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'yandex_token_expires_at' => 'datetime',
+            'api_key_expires_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Find a user by API key.
+     */
+    public static function findByApiKey($apiKey)
+    {
+        return self::where('api_key', $apiKey)->first();
     }
 }

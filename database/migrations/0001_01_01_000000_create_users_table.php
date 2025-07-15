@@ -18,6 +18,7 @@ return new class extends Migration
             $table->string('convertfromwhat')->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
+            $table->string('api_key')->unique()->nullable()->after('password');
             $table->rememberToken();
             $table->timestamps();
         });

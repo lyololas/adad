@@ -15,7 +15,7 @@ class YandexController extends Controller
     public function redirectToProvider()
     {
         return Socialite::driver('yandex')
-            ->scopes(['cloud_api:disk.write'])
+            ->scopes(['cloud_api:disk.read'])
             ->redirectUrl(route('yandex.callback'))
             ->redirect();
     }
@@ -67,6 +67,35 @@ class YandexController extends Controller
         }
 
         return $result;
+    }
+
+    public function generateApiKey(Request $request)
+    {
+        $user = $request->user();
+        if ($user->api_key && $user->api_key_expires_at && $user->api_key_expires_at->isFuture()) {
+            $nextAllowed = $user->api_key_expires_at->copy();
+            return response()->json([
+                'success' => false,
+                'message' => 'API-ключ можно сгенерировать только один раз в месяц.',
+                'next_allowed' => $nextAllowed->toDateTimeString(),
+                'expires_at' => $user->api_key_expires_at->toDateTimeString(),
+                'api_key' => $user->api_key,
+            ], 429);
+        }
+        if (!$user->yandex_token) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Требуется авторизация через Яндекс.'
+            ], 403);
+        }
+        $user->api_key = \Illuminate\Support\Str::random(64);
+        $user->api_key_expires_at = now()->addMonth();
+        $user->save();
+        return response()->json([
+            'success' => true,
+            'api_key' => $user->api_key,
+            'expires_at' => $user->api_key_expires_at->toDateTimeString(),
+        ]);
     }
 
     private function attemptUploadWithRetry($user, $tempFilePath, $remotePath, $maxAttempts = 5, $delaySeconds = 10)
