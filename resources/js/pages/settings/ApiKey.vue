@@ -7,7 +7,7 @@
       Вернуться
     </button>
     <div class="text-4xl font-bold mb-6 select-none">
-      <span class="text-red-600">это</span><span class="text-blue-600">база</span>
+      <img src="/svg/icon/Group 26.svg" alt="этобаза" class="h-12 md:h-16 w-auto inline-block align-middle" />
     </div>
     <h1 class="text-4xl font-light mb-4 text-center text-black">Получить ключ API</h1>
     <div v-if="!result || (result && result.success && !result.api_key)" class="mb-6 text-center text-base text-red-600 max-w-md">

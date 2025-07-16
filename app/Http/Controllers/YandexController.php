@@ -19,7 +19,6 @@ class YandexController extends Controller
             ->redirectUrl(route('yandex.callback'))
             ->redirect();
     }
-
     public function handleProviderCallback()
     {
         $yandexUser = Socialite::driver('yandex')->user();
@@ -38,13 +37,11 @@ class YandexController extends Controller
         Auth::login($user, true);
         return redirect()->intended('/dashboard');
     }
-
     public function upload(Request $request)
     {
         $request->validate([
             'file' => 'required|file|max:10240|mimes:xlsx,xls'
         ]);
-
         $user = $request->user();
         if (!$user->yandex_token) {
             return response()->json([
@@ -52,20 +49,13 @@ class YandexController extends Controller
                 'message' => 'Yandex token not available. Please reauthenticate.'
             ], 401);
         }
-
-        // Store file temporarily for retries
         $tempFilePath = $this->storeTempFile($request->file('file'));
         $fileName = 'data.xlsx';
         $remotePath = '/Documents/' . $fileName;
-
-        // Initial attempt
         $result = $this->attemptUploadWithRetry($user, $tempFilePath, $remotePath);
-
-        // Clean up temp file
         if (file_exists($tempFilePath)) {
             unlink($tempFilePath);
         }
-
         return $result;
     }
 
@@ -105,27 +95,20 @@ class YandexController extends Controller
 
         while ($attempt <= $maxAttempts) {
             try {
-                // 1. Ensure directory exists
                 $this->ensureDirectory($user->yandex_token, '/Documents');
 
-                // 2. Get upload URL with overwrite
                 $uploadUrl = $this->getUploadUrl($user->yandex_token, $remotePath);
 
-                // 3. Upload file
                 $uploadResponse = Http::withHeaders([
                     'Authorization' => 'OAuth ' . $user->yandex_token,
                     'Content-Type' => 'application/octet-stream',
                 ])->withBody(
                     fopen($tempFilePath, 'r')
                 )->put($uploadUrl);
-
                 if ($uploadResponse->failed()) {
                     throw new \Exception('File upload failed: ' . $uploadResponse->body());
                 }
-
-                // 4. Publish and get URL
                 $publicUrl = $this->publishFile($user->yandex_token, $remotePath);
-
                 return response()->json([
                     'success' => true,
                     'url' => $publicUrl,
@@ -133,7 +116,6 @@ class YandexController extends Controller
                     'action' => 'updated',
                     'attempts' => $attempt
                 ]);
-
             } catch (\Exception $e) {
                 $lastError = $e;
                 Log::warning("Yandex upload attempt $attempt failed", [
@@ -141,7 +123,6 @@ class YandexController extends Controller
                     'user_id' => $user->id,
                     'next_attempt_in' => "$delaySeconds seconds"
                 ]);
-
                 if ($attempt < $maxAttempts) {
                     sleep($delaySeconds);
                 }
@@ -168,7 +149,6 @@ class YandexController extends Controller
         return $tempPath;
     }
 
-    /* ---------- existing helpers ---------- */
     private function getFileInfo($token, $path)
     {
         try {

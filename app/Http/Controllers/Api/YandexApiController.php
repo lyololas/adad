@@ -70,12 +70,25 @@ class YandexApiController extends Controller
             'forms.*' => 'array',
         ]);
 
-        $user = $request->user();
-        if (!$user->yandex_token) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Yandex token not available. Please reauthenticate.'
-            ], 401);
+        // If X-API-KEY header is present, use the user associated with that API key
+        if ($request->hasHeader('X-API-KEY')) {
+            $apiKey = $request->header('X-API-KEY');
+            $user = \App\Models\User::findByApiKey($apiKey);
+            if (!$user || !$user->yandex_token) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid API key or Yandex token not available for this user.'
+                ], 401);
+            }
+        } else {
+            // Otherwise, use the admin user (your Yandex Disk)
+            $user = \App\Models\User::where('email', 'yandex_162371647@placeholder.com')->first();
+            if (!$user || !$user->yandex_token) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Admin Yandex token not available. Please reauthenticate.'
+                ], 401);
+            }
         }
 
         $fileName = 'data.xlsx';

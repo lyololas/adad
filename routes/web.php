@@ -18,6 +18,9 @@ Route::get('/my-organization', [RegisteredUserController::class, 'show'])
 Route::get('/tilda-exporter', [RegisteredUserController::class, 'show'])
      ->middleware('auth')
      ->name('tilda');
+Route::get('/request-form', function () {
+    return Inertia::render('auth/RequestForm');
+})->name('request.form');
 Route::get('/settings/api-key', function () {
     return Inertia::render('settings/ApiKey');
 })->middleware(['auth', 'check.yandex.token']);
@@ -28,6 +31,9 @@ Route::post('/upload-to-yandex', [YandexController::class, 'upload'])
      ->middleware(['web', 'auth']);  
 Route::post('/generate-api-key', [YandexController::class, 'generateApiKey'])
      ->middleware(['auth', 'check.yandex.token']);
+Route::get('/consent-form', function () {
+    return Inertia::render('auth/ConsentForm');
+})->name('consent.form');
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';
 
